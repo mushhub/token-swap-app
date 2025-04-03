@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シンプルトークンスワップ</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/1.8.1/web3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f5f7fa;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 24px;
+            width: 100%;
+            max-width: 480px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .swap-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .token-input {
+            display: flex;
+            flex-direction: column;
+            background-color: #f8fafc;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        .token-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #64748b;
+        }
+        .token-amount {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        input {
+            border: none;
+            background: transparent;
+            font-size: 24px;
+            width: 100%;
+            outline: none;
+            color: #334155;
+        }
+        .token-select {
+            background-color: #e2e8f0;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+        .swap-button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: background-color 0.2s;
+        }
+        .swap-button:hover {
+            background-color: #2563eb;
+        }
+        .swap-button:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+        .swap-icon {
+            align-self: center;
+            background-color: white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+            margin: -6px 0;
+            cursor: pointer;
+        }
+        .rate-info {
+            text-align: center;
+            margin-top: 16px;
+            color: #64748b;
+        }
+        .connect-button {
+            background-color: #f59e0b;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 16px;
+            width: 100%;
+        }
+        .status-message {
+            margin-top: 12px;
+            padding: 8px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .error {
+            background-color: #fee2e2;
+            color: #b91c1c;
+        }
+        .success {
+            background-color: #dcfce7;
+            color: #15803d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>シンプルトークンスワップ</h1>
+        
+        <button id="connectButton" class="connect-button">ウォレットに接続</button>
+        
+        <div class="swap-container">
+            <div class="token-input">
+                <div class="token-label">
+                    <span>From</span>
+                    <span id="balanceA">残高: 0 TKNA</span>
+                </div>
+                <div class="token-amount">
+                    <input type="number" id="amountA" placeholder="0.0">
+                    <div class="token-select">TKNA</div>
+                </div>
+            </div>
+            
+            <div class="swap-icon" id="switchTokens">↓</div>
+            
+            <div class="token-input">
+                <div class="token-label">
+                    <span>To</span>
+                    <span id="balanceB">残高: 0 TKNB</span>
+                </div>
+                <div class="token-amount">
+                    <input type="number" id="amountB" placeholder="0.0">
+                    <div class="token-select">TKNB</div>
+                </div>
+            </div>
+            
+            <div class="rate-info" id="rateInfo">1 TKNA = ? TKNB</div>
+            
+            <button id="approveButton" class="swap-button">承認する</button>
+            <button id="swapButton" class="swap-button" disabled>スワップ</button>
+            
+            <div id="statusMessage" class="status-message" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // ABI定義
+        const tokenAbi = [
+            "function balanceOf(address owner) view returns (uint256)",
+            "function approve(address spender, uint256 amount) returns (bool)",
+            "function allowance(address owner, address spender) view returns (uint256)"
+        ];
+        
+        const swapAbi = [
+            "function rateAToB() view returns (uint256)",
+            "function rateBToA() view returns (uint256)",
+            "function swapAToB(uint256 amountA)",
+            "function swapBToA(uint256 amountB)"
+        ];
+        
+        // アドレス設定 (Remixでデプロイ後に更新が必要)
+        let tokenAAddress = "0x..."; // TokenAのアドレスを入力してください
+        let tokenBAddress = "0x..."; // TokenBのアドレスを入力してください
+        let swapAddress = "0x...";   // SimpleSwapのアドレスを入力してください
+        
+        // 変数初期化
+        let provider, signer, currentAccount;
+        let tokenA, tokenB, swapContract;
+        let isAToB = true; // スワップ方向
+        
+        // 必要なHTML要素
+        const connectButton = document.getElementById('connectButton');
+        const approveButton = document.getElementById('approveButton');
+        const swapButton = document.getElementById('swapButton');
+        const amountAInput = document.getElementById('amountA');
+        const amountBInput = document.getElementById('amountB');
+        const balanceAText = document.getElementById('balanceA');
+        const balanceBText = document.getElementById('balanceB');
+        const rateInfoText = document.getElementById('rateInfo');
+        const switchTokensButton = document.getElementById('switchTokens');
+        const statusMessage = document.getElementById('statusMessage');
+        
+        // ウォレット接続
+        async function connectWallet() {
+            try {
+                if (window.ethereum) {
+                    provider = new ethers.providers.Web3Provider(window.ethereum);
+                    await provider.send("eth_requestAccounts", []);
+                    signer = provider.getSigner();
+                    currentAccount = await signer.getAddress();
+                    
+                    connectButton.textContent = `${currentAccount.substring(0, 6)}...${currentAccount.substring(38)}`;
+                    
+                    // コントラクトインスタンスの作成
+                    tokenA = new ethers.Contract(tokenAAddress, tokenAbi, signer);
+                    tokenB = new ethers.Contract(tokenBAddress, tokenAbi, signer);
+                    swapContract = new ethers.Contract(swapAddress, swapAbi, signer);
+                    
+                    // 残高とレートの更新
+                    updateBalances();
+                    updateRate();
+                    
+                    // 入力イベントを有効化
+                    enableInputEvents();
+                    
+                    showStatus("ウォレット接続完了!", "success");
+                } else {
+                    showStatus("MetaMaskをインストールしてください", "error");
+                }
+            } catch (error) {
+                console.error("接続エラー:", error);
+                showStatus("接続エラーが発生しました", "error");
+            }
+        }
+        
+        // 残高を更新
+        async function updateBalances() {
+            try {
+                const balA = await tokenA.balanceOf(currentAccount);
+                const balB = await tokenB.balanceOf(currentAccount);
+                
+                balanceAText.textContent = `残高: ${ethers.utils.formatEther(balA)} TKNA`;
+                balanceBText.textContent = `残高: ${ethers.utils.formatEther(balB)} TKNB`;
+            } catch (error) {
+                console.error("残高取得エラー:", error);
+            }
+        }
+        
+        // レートを更新
+        async function updateRate() {
+            try {
+                const rateAB = await swapContract.rateAToB();
+                const rateBA = await swapContract.rateBToA();
+                
+                if (isAToB) {
+                    rateInfoText.textContent = `1 TKNA = ${ethers.utils.formatEther(rateAB)} TKNB`;
+                } else {
+                    rateInfoText.textContent = `1 TKNB = ${ethers.utils.formatEther(rateBA)} TKNA`;
+                }
+            } catch (error) {
+                console.error("レート取得エラー:", error);
+            }
+        }
+        
+        // 入力イベントの有効化
+        function enableInputEvents() {
+            amountAInput.addEventListener('input', async () => {
+                if (isAToB && amountAInput.value) {
+                    try {
+                        const amountA = ethers.utils.parseEther(amountAInput.value);
+                        const rateAB = await swapContract.rateAToB();
+                        const amountB = amountA.mul(rateAB).div(ethers.utils.parseEther("1"));
+                        amountBInput.value = ethers.utils.formatEther(amountB);
+                    } catch (error) {
+                        console.error("計算エラー:", error);
+                    }
+                }
+            });
+            
+            amountBInput.addEventListener('input', async () => {
+                if (!isAToB && amountBInput.value) {
+                    try {
+                        const amountB = ethers.utils.parseEther(amountBInput.value);
+                        const rateBA = await swapContract.rateBToA();
+                        const amountA = amountB.mul(rateBA).div(ethers.utils.parseEther("1"));
+                        amountAInput.value = ethers.utils.formatEther(amountA);
+                    } catch (error) {
+                        console.error("計算エラー:", error);
+                    }
+                }
+            });
+            
+            switchTokensButton.addEventListener('click', () => {
+                isAToB = !isAToB;
+                updateRate();
+                
+                // 入力値もクリア
+                amountAInput.value = '';
+                amountBInput.value = '';
+                
+                if (isAToB) {
+                    amountAInput.removeAttribute('disabled');
+                    amountBInput.setAttribute('disabled', true);
+                } else {
+                    amountBInput.removeAttribute('disabled');
+                    amountAInput.setAttribute('disabled', true);
+                }
+            });
+        }
+        
+        // トークン承認
+        async function approveTokens() {
+            try {
+                showStatus("承認処理中...", "");
+                
+                let tx;
+                if (isAToB) {
+                    const amountA = ethers.utils.parseEther(amountAInput.value || "0");
+                    tx = await tokenA.approve(swapAddress, amountA);
+                } else {
+                    const amountB = ethers.utils.parseEther(amountBInput.value || "0");
+                    tx = await tokenB.approve(swapAddress, amountB);
+                }
+                
+                await tx.wait();
+                showStatus("承認が完了しました!", "success");
+                swapButton.disabled = false;
+            } catch (error) {
+                console.error("承認エラー:", error);
+                showStatus("承認に失敗しました", "error");
+            }
+        }
+        
+        // スワップ実行
+        async function performSwap() {
+            try {
+                showStatus("スワップ処理中...", "");
+                
+                let tx;
+                if (isAToB) {
+                    const amountA = ethers.utils.parseEther(amountAInput.value || "0");
+                    tx = await swapContract.swapAToB(amountA);
+                } else {
+                    const amountB = ethers.utils.parseEther(amountBInput.value || "0");
+                    tx = await swapContract.swapBToA(amountB);
+                }
+                
+                await tx.wait();
+                showStatus("スワップが完了しました!", "success");
+                
+                // スワップ後にデータを更新
+                updateBalances();
+                amountAInput.value = '';
+                amountBInput.value = '';
+                swapButton.disabled = true;
+            } catch (error) {
+                console.error("スワップエラー:", error);
+                showStatus("スワップに失敗しました", "error");
+            }
+        }
+        
+        // ステータスメッセージの表示
+        function showStatus(message, type) {
+            statusMessage.textContent = message;
+            statusMessage.className = "status-message";
+            if (type) {
+                statusMessage.classList.add(type);
+            }
+            statusMessage.style.display = "block";
+            
+            // 成功メッセージは3秒後に消去
+            if (type === "success") {
+                setTimeout(() => {
+                    statusMessage.style.display = "none";
+                }, 3000);
+            }
+        }
+        
+        // イベントリスナー設定
+        connectButton.addEventListener('click', connectWallet);
+        approveButton.addEventListener('click', approveTokens);
+        swapButton.addEventListener('click', performSwap);
+        
+        // 初期状態設定
+        amountBInput.setAttribute('disabled', true);
+    </script>
+</body>
+</html>
